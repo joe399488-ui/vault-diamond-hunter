@@ -23,12 +23,12 @@ const getValidEdges = (unit, orientation) => {
   if (h === 1) { // Horizontal 1xN
     if (w === 2) return ['left', 'right'];
     if (w === 3) return ['left', 'middle', 'right'];
-    if (w === 4) return ['left', 'middle-left', 'middle-right', 'right'];
+    if (w === 4) return ['left', 'middle', 'right']; // Simplified: middle covers both center positions
   }
   if (w === 1) { // Vertical Nx1
     if (h === 2) return ['top', 'bottom'];
     if (h === 3) return ['top', 'middle', 'bottom'];
-    if (h === 4) return ['top', 'middle-top', 'middle-bottom', 'bottom'];
+    if (h === 4) return ['top', 'middle', 'bottom']; // Simplified: middle covers both center positions
   }
 
   // 2D Shapes
@@ -58,25 +58,31 @@ const getValidEdges = (unit, orientation) => {
 const getOffsetFromEdge = (edge, w, h) => {
   // Helper to find the Top-Left coordinate relative to the hit cell (dr, dc)
   
-  // Handle specific edge cases based on dimensions
-  if (edge === 'middle-left') {
-    if (h === 1) return { dr: 0, dc: -1 }; // 1x4 horizontal
-    if (w === 2 && h === 3) return { dr: -1, dc: 0 }; // 2x3 vertical (purple)
-    return { dr: -Math.floor(h / 2), dc: 0 };
+  // Handle specific edge cases for 2x3 purple diamond
+  if (w === 2 && h === 3) {
+    const offsets2x3 = {
+      'top-left': { dr: 0, dc: 0 },
+      'top-right': { dr: 0, dc: -1 },
+      'middle-left': { dr: -1, dc: 0 },
+      'middle-right': { dr: -1, dc: -1 },
+      'bottom-left': { dr: -2, dc: 0 },
+      'bottom-right': { dr: -2, dc: -1 },
+    };
+    if (offsets2x3[edge]) return offsets2x3[edge];
   }
   
-  if (edge === 'middle-right') {
-    if (h === 1) return { dr: 0, dc: -2 }; // 1x4 horizontal
-    if (w === 2 && h === 3) return { dr: -1, dc: -1 }; // 2x3 vertical (purple)
-    return { dr: -Math.floor(h / 2), dc: -(w - 1) };
-  }
-  
-  if (edge === 'middle-top') {
-    return { dr: -1, dc: 0 };  // For vertical 1x4
-  }
-  
-  if (edge === 'middle-bottom') {
-    return { dr: -2, dc: 0 };  // For vertical 1x4
+  // For 1x4 and 4x1, 'middle' covers both center positions
+  // We need to return MULTIPLE possible offsets for probability calculation
+  if (edge === 'middle') {
+    if (w === 4 && h === 1) {
+      // For 1x4 horizontal, middle could be position 1 or 2
+      // Return the first possibility (position 1), we'll handle both in probability calc
+      return { dr: 0, dc: -1, alternative: { dr: 0, dc: -2 } };
+    }
+    if (w === 1 && h === 4) {
+      // For 4x1 vertical, middle could be position 1 or 2
+      return { dr: -1, dc: 0, alternative: { dr: -2, dc: 0 } };
+    }
   }
   
   const offsets = {
@@ -163,7 +169,7 @@ export default function VaultSolver() {
     // 1. Edge-based Discovery (Strong)
     hits.forEach(hit => {
       if (usedHits.has(`${hit.r},${hit.c}`)) return;
-      if (!hit.edge || hit.edge === 'middle') return; 
+      if (!hit.edge) return; 
 
       const unitIndex = remainingUnits.findIndex(u => u.color === hit.color);
       if (unitIndex === -1) return;
@@ -174,32 +180,45 @@ export default function VaultSolver() {
       const h = unit.orientation === 'H' ? unitDef.height : unitDef.width;
 
       const offset = getOffsetFromEdge(hit.edge, w, h);
-      const topLeftR = hit.r + offset.dr;
-      const topLeftC = hit.c + offset.dc;
+      
+      // Try primary offset
+      const tryPlacement = (topLeftR, topLeftC) => {
+        let matches = true;
+        const unitHitKeys = [];
 
-      // Validate placement
-      let matches = true;
-      const unitHitKeys = [];
-
-      for(let r = 0; r < h; r++) {
-        for(let c = 0; c < w; c++) {
-          const checkR = topLeftR + r;
-          const checkC = topLeftC + c;
-          
-          if (checkR < 0 || checkR >= boardHeight || checkC < 0 || checkC >= boardWidth) {
-            matches = false; break;
+        for(let r = 0; r < h; r++) {
+          for(let c = 0; c < w; c++) {
+            const checkR = topLeftR + r;
+            const checkC = topLeftC + c;
+            
+            if (checkR < 0 || checkR >= boardHeight || checkC < 0 || checkC >= boardWidth) {
+              matches = false; break;
+            }
+            
+            const cell = board[checkR][checkC];
+            if (!cell.revealed || !cell.isHit || cell.color !== unit.color) {
+              matches = false; break;
+            }
+            unitHitKeys.push(`${checkR},${checkC}`);
           }
-          
-          const cell = board[checkR][checkC];
-          if (!cell.revealed || !cell.isHit || cell.color !== unit.color) {
-            matches = false; break;
-          }
-          unitHitKeys.push(`${checkR},${checkC}`);
+          if(!matches) break;
         }
-        if(!matches) break;
+        
+        return matches ? unitHitKeys : null;
+      };
+      
+      let topLeftR = hit.r + offset.dr;
+      let topLeftC = hit.c + offset.dc;
+      let unitHitKeys = tryPlacement(topLeftR, topLeftC);
+      
+      // For 1x4/4x1 with 'middle', try alternative offset if primary fails
+      if (!unitHitKeys && offset.alternative && hit.edge === 'middle') {
+        topLeftR = hit.r + offset.alternative.dr;
+        topLeftC = hit.c + offset.alternative.dc;
+        unitHitKeys = tryPlacement(topLeftR, topLeftC);
       }
 
-      if (matches) {
+      if (unitHitKeys) {
         discovered.push({ ...unit, discovered: true, location: { r: topLeftR, c: topLeftC } });
         unitHitKeys.forEach(k => usedHits.add(k));
         remainingUnits.splice(unitIndex, 1); 
@@ -304,16 +323,32 @@ export default function VaultSolver() {
                 hitScore += 1;
                 
                 // EDGE CONSISTENCY CHECK
-                if (cell.edge && cell.edge !== 'middle') {
-                  const expectedOffset = getOffsetFromEdge(cell.edge, w, h);
-                  const expectedTopLeftR = cellR + expectedOffset.dr;
-                  const expectedTopLeftC = cellC + expectedOffset.dc;
-
+                if (cell.edge) {
+                  const offset = getOffsetFromEdge(cell.edge, w, h);
+                  const expectedTopLeftR = cellR + offset.dr;
+                  const expectedTopLeftC = cellC + offset.dc;
+                  
+                  let matches = false;
+                  
+                  // Check primary offset
                   if (expectedTopLeftR === r && expectedTopLeftC === c) {
-                     edgeMatchScore += 1000; 
+                    matches = true;
+                  }
+                  
+                  // For 1x4/4x1 with 'middle' edge, check alternative offset
+                  if (!matches && offset.alternative && cell.edge === 'middle') {
+                    const altR = cellR + offset.alternative.dr;
+                    const altC = cellR + offset.alternative.dc;
+                    if (altR === r && altC === c) {
+                      matches = true;
+                    }
+                  }
+                  
+                  if (matches) {
+                    edgeMatchScore += 1000; // Strong edge match
                   } else {
-                     valid = false; 
-                     break; 
+                    valid = false; // Edge constraint violation
+                    break;
                   }
                 }
               }
