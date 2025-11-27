@@ -119,7 +119,8 @@ export default function VaultSolver() {
   // --- Setup Actions ---
 
   const addUnit = (color) => {
-    const orientation = (color === 'purple') ? 'V' : 'H'; // Purple is always vertical
+    // Purple is always vertical 3x2 (2x3 shape), we keep it in fixed orientation "H"
+    const orientation = color === 'purple' ? 'H' : 'H';
     setUnits([...units, { id: Date.now(), color, orientation }]);
   };
 
@@ -180,49 +181,56 @@ export default function VaultSolver() {
       const h = unit.orientation === 'H' ? unitDef.height : unitDef.width;
 
       const offset = getOffsetFromEdge(hit.edge, w, h);
-      
-      // Try primary offset
-      const tryPlacement = (topLeftR, topLeftC) => {
-        let matches = true;
-        const unitHitKeys = [];
 
-        for(let r = 0; r < h; r++) {
-          for(let c = 0; c < w; c++) {
+      const applyDiscovery = (topLeftR, topLeftC, requireAllHits = true) => {
+        let matches = true;
+        const unitHitKeys: string[] = [];
+
+        for (let r = 0; r < h; r++) {
+          for (let c = 0; c < w; c++) {
             const checkR = topLeftR + r;
             const checkC = topLeftC + c;
-            
+
             if (checkR < 0 || checkR >= boardHeight || checkC < 0 || checkC >= boardWidth) {
               matches = false; break;
             }
-            
+
             const cell = board[checkR][checkC];
-            if (!cell.revealed || !cell.isHit || cell.color !== unit.color) {
+
+            if (cell.revealed) {
+              if (!cell.isHit || cell.color !== unit.color) {
+                matches = false; break;
+              }
+              unitHitKeys.push(`${checkR},${checkC}`);
+            } else if (requireAllHits) {
+              // For normal units we require every tile to already be a hit
               matches = false; break;
             }
-            unitHitKeys.push(`${checkR},${checkC}`);
           }
-          if(!matches) break;
+          if (!matches) break;
         }
-        
-        return matches ? unitHitKeys : null;
-      };
-      
-      let topLeftR = hit.r + offset.dr;
-      let topLeftC = hit.c + offset.dc;
-      let unitHitKeys = tryPlacement(topLeftR, topLeftC);
-      
-      // For 1x4/4x1 with 'middle', try alternative offset if primary fails
-      if (!unitHitKeys && offset.alternative && hit.edge === 'middle') {
-        topLeftR = hit.r + offset.alternative.dr;
-        topLeftC = hit.c + offset.alternative.dc;
-        unitHitKeys = tryPlacement(topLeftR, topLeftC);
-      }
 
-      if (unitHitKeys) {
+        if (!matches) return null;
+
         discovered.push({ ...unit, discovered: true, location: { r: topLeftR, c: topLeftC } });
         unitHitKeys.forEach(k => usedHits.add(k));
-        remainingUnits.splice(unitIndex, 1); 
+        remainingUnits.splice(unitIndex, 1);
+        return true;
+      };
+
+      // For purple diamond, a single edge hit determines its exact placement.
+      if (unit.color === 'purple') {
+        const topLeftR = hit.r + offset.dr;
+        const topLeftC = hit.c + offset.dc;
+        const ok = applyDiscovery(topLeftR, topLeftC, false);
+        if (ok) return;
       }
+
+      // Default behaviour: require full block of hits for discovery
+      const topLeftR = hit.r + offset.dr;
+      const topLeftC = hit.c + offset.dc;
+      const ok = applyDiscovery(topLeftR, topLeftC, true);
+      if (ok) return;
     });
 
     // 2. Simple Block Discovery (Weak/Fill)
@@ -336,13 +344,13 @@ export default function VaultSolver() {
                   }
                   
                   // For 1x4/4x1 with 'middle' edge, check alternative offset
-                  if (!matches && offset.alternative && cell.edge === 'middle') {
-                    const altR = cellR + offset.alternative.dr;
-                    const altC = cellR + offset.alternative.dc;
-                    if (altR === r && altC === c) {
-                      matches = true;
-                    }
-                  }
+                   if (!matches && offset.alternative && cell.edge === 'middle') {
+                     const altR = cellR + offset.alternative.dr;
+                     const altC = cellC + offset.alternative.dc;
+                     if (altR === r && altC === c) {
+                       matches = true;
+                     }
+                   }
                   
                   if (matches) {
                     edgeMatchScore += 1000; // Strong edge match
