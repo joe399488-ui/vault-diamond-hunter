@@ -218,14 +218,6 @@ export default function VaultSolver() {
         return true;
       };
 
-      // For purple diamond, a single edge hit determines its exact placement.
-      if (unit.color === 'purple') {
-        const topLeftR = hit.r + offset.dr;
-        const topLeftC = hit.c + offset.dc;
-        const ok = applyDiscovery(topLeftR, topLeftC, false);
-        if (ok) return;
-      }
-
       // Default behaviour: require full block of hits for discovery
       const topLeftR = hit.r + offset.dr;
       const topLeftC = hit.c + offset.dc;
